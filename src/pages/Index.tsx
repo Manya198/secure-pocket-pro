@@ -1,9 +1,21 @@
+import { useState, useEffect } from 'react';
 import { useAuth } from '@/hooks/useAuth';
 import { AuthForm } from '@/components/auth/AuthForm';
 import { CredentialsList } from '@/components/credentials/CredentialsList';
+import { MasterPasswordDialog } from '@/components/auth/MasterPasswordDialog';
+import { getMasterKey } from '@/lib/encryption';
 
 const Index = () => {
   const { user, loading } = useAuth();
+  const [masterPasswordUnlocked, setMasterPasswordUnlocked] = useState(false);
+
+  useEffect(() => {
+    if (user) {
+      // Check if master key is already set
+      const masterKey = getMasterKey();
+      setMasterPasswordUnlocked(!!masterKey);
+    }
+  }, [user]);
 
   if (loading) {
     return (
@@ -16,7 +28,19 @@ const Index = () => {
     );
   }
 
-  return user ? <CredentialsList /> : <AuthForm />;
+  if (!user) {
+    return <AuthForm />;
+  }
+
+  return (
+    <>
+      <CredentialsList />
+      <MasterPasswordDialog
+        isOpen={!masterPasswordUnlocked}
+        onUnlock={() => setMasterPasswordUnlocked(true)}
+      />
+    </>
+  );
 };
 
 export default Index;

@@ -3,6 +3,7 @@ import { supabase } from '@/lib/supabase';
 import { Credential, CreateCredential, UpdateCredential } from '@/types/credential';
 import { toast } from '@/hooks/use-toast';
 import { useAuth } from './useAuth';
+import { encryptData, decryptData, getMasterKey } from '@/lib/encryption';
 
 export const useCredentials = () => {
   const { user } = useAuth();
@@ -11,6 +12,9 @@ export const useCredentials = () => {
 
   const fetchCredentials = async () => {
     if (!user) return;
+
+    const masterKey = getMasterKey();
+    if (!masterKey) return;
 
     setLoading(true);
     try {
@@ -21,7 +25,14 @@ export const useCredentials = () => {
         .order('created_at', { ascending: false });
 
       if (error) throw error;
-      setCredentials(data || []);
+      
+      // Decrypt passwords before setting state
+      const decryptedCredentials = (data || []).map(cred => ({
+        ...cred,
+        password: decryptData(cred.password, masterKey),
+      }));
+      
+      setCredentials(decryptedCredentials);
     } catch (error: any) {
       toast({
         title: "Error fetching credentials",
@@ -44,25 +55,45 @@ export const useCredentials = () => {
   const addCredential = async (credential: CreateCredential) => {
     if (!user) return;
 
+    const masterKey = getMasterKey();
+    if (!masterKey) {
+      toast({
+        title: "Master password required",
+        description: "Please unlock your credentials first.",
+        variant: "destructive",
+      });
+      return { data: null, error: new Error('Master password required') };
+    }
+
     try {
+      // Encrypt password before storing
+      const encryptedCredential = {
+        ...credential,
+        password: encryptData(credential.password, masterKey),
+        user_id: user.id,
+      };
+
       const { data, error } = await supabase
         .from('credentials')
-        .insert({
-          ...credential,
-          user_id: user.id,
-        })
+        .insert(encryptedCredential)
         .select()
         .single();
 
       if (error) throw error;
 
-      setCredentials(prev => [data, ...prev]);
+      // Add decrypted version to local state
+      const decryptedData = {
+        ...data,
+        password: credential.password, // Use original unencrypted password for local state
+      };
+
+      setCredentials(prev => [decryptedData, ...prev]);
       toast({
         title: "Credential added",
         description: `${credential.platform} credentials saved successfully.`,
       });
 
-      return { data, error: null };
+      return { data: decryptedData, error: null };
     } catch (error: any) {
       toast({
         title: "Error adding credential",
@@ -74,13 +105,27 @@ export const useCredentials = () => {
   };
 
   const updateCredential = async (id: string, updates: UpdateCredential) => {
+    const masterKey = getMasterKey();
+    if (!masterKey) {
+      toast({
+        title: "Master password required",
+        description: "Please unlock your credentials first.",
+        variant: "destructive",
+      });
+      return { data: null, error: new Error('Master password required') };
+    }
+
     try {
+      // Encrypt password if it's being updated
+      const encryptedUpdates = {
+        ...updates,
+        ...(updates.password && { password: encryptData(updates.password, masterKey) }),
+        updated_at: new Date().toISOString(),
+      };
+
       const { data, error } = await supabase
         .from('credentials')
-        .update({
-          ...updates,
-          updated_at: new Date().toISOString(),
-        })
+        .update(encryptedUpdates)
         .eq('id', id)
         .eq('user_id', user?.id)
         .select()
@@ -88,8 +133,14 @@ export const useCredentials = () => {
 
       if (error) throw error;
 
+      // Decrypt for local state
+      const decryptedData = {
+        ...data,
+        password: decryptData(data.password, masterKey),
+      };
+
       setCredentials(prev =>
-        prev.map(cred => (cred.id === id ? data : cred))
+        prev.map(cred => (cred.id === id ? decryptedData : cred))
       );
 
       toast({
@@ -97,7 +148,7 @@ export const useCredentials = () => {
         description: "Changes saved successfully.",
       });
 
-      return { data, error: null };
+      return { data: decryptedData, error: null };
     } catch (error: any) {
       toast({
         title: "Error updating credential",
